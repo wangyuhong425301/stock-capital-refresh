@@ -62,7 +62,13 @@ jobs:
         id: refresh_home_index_close
         continue-on-error: true
         working-directory: private
-        run: node scripts/generate-home-index-close.js
+        run: |
+          for attempt in 1 2 3; do
+            if node scripts/generate-home-index-close.js; then exit 0; fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "Home index close snapshot is not ready; retrying in 30 seconds"
+            sleep 30
+          done
 
       - name: Verify publication
         working-directory: private
