@@ -53,6 +53,8 @@ jobs:
           done
 
       - name: Refresh sector member 5m/15m K snapshot
+        id: refresh_sector_short_k
+        continue-on-error: true
         working-directory: private
         run: node scripts/update-tdx-sector-short-k.js
 
@@ -67,7 +69,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add api/tdx-sector-baseline.json api/tdx-sector-member-map.json
+          if [ "${{ steps.refresh_sector_short_k.outcome }}" = "success" ]; then
+            git add api/tdx-sector-member-map.json
+          else
+            echo "Short-K snapshot failed; keeping the previous member map"
+            git checkout -- api/tdx-sector-member-map.json || true
+          fi
+          git add api/tdx-sector-baseline.json
           if git diff --cached --quiet; then
             echo "No snapshot changes"
             exit 0
