@@ -58,6 +58,12 @@ jobs:
         working-directory: private
         run: node scripts/update-tdx-sector-short-k.js
 
+      - name: Refresh home index close snapshot
+        id: refresh_home_index_close
+        continue-on-error: true
+        working-directory: private
+        run: node scripts/generate-home-index-close.js
+
       - name: Verify publication
         working-directory: private
         run: |
@@ -76,6 +82,9 @@ jobs:
             git checkout -- api/tdx-sector-member-map.json || true
           fi
           git add api/tdx-sector-baseline.json
+          if [ "${{ steps.refresh_home_index_close.outcome }}" = "success" ]; then
+            git add public/data/home-index-close.json
+          fi
           if git diff --cached --quiet; then
             echo "No snapshot changes"
             exit 0
