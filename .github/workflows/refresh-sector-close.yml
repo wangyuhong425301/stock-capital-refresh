@@ -52,6 +52,10 @@ jobs:
             sleep 60
           done
 
+      - name: Refresh sector member 5m/15m K snapshot
+        working-directory: private
+        run: node scripts/update-tdx-sector-short-k.js
+
       - name: Verify publication
         working-directory: private
         run: |
