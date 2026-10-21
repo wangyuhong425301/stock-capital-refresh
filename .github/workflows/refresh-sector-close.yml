@@ -3,7 +3,8 @@ name: Refresh sector close snapshot
 on:
   workflow_dispatch:
   schedule:
-    # 15:30 Asia/Shanghai on trading weekdays.
+    # 11:35 morning market review and 15:30 close snapshots (Asia/Shanghai).
+    - cron: '35 3 * * 1-5'
     - cron: '30 7 * * 1-5'
 
 permissions:
@@ -33,6 +34,7 @@ jobs:
           python-version: '3.12'
 
       - name: Refresh sector baseline
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
         working-directory: private
         run: |
           for attempt in 1 2 3; do
@@ -43,6 +45,7 @@ jobs:
           done
 
       - name: Refresh sector member K snapshot
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
         working-directory: private
         run: |
           for attempt in 1 2; do
@@ -54,12 +57,14 @@ jobs:
 
       - name: Refresh sector member 5m/15m K snapshot
         id: refresh_sector_short_k
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
         continue-on-error: true
         working-directory: private
         run: node scripts/update-tdx-sector-short-k.js
 
       - name: Refresh home index close snapshot
         id: refresh_home_index_close
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
         continue-on-error: true
         working-directory: private
         run: |
@@ -71,10 +76,35 @@ jobs:
           done
 
       - name: Verify publication
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
         working-directory: private
         run: |
           expected_close_date="$(python3 -c "import sys; sys.path.insert(0, 'api'); import tdx_sector; print(tdx_sector.expected_close_trade_date())")"
           node scripts/verify-tdx-sector-publication.js --expected-date "$expected_close_date"
+
+      - name: Refresh market review
+        id: refresh_market_review
+        if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '35 3 * * 1-5' || github.event.schedule == '30 7 * * 1-5')
+        continue-on-error: true
+        working-directory: private
+        run: |
+          case "${{ github.event.schedule }}" in
+            '35 3 * * 1-5') market_review_session='morning' ;;
+            '30 7 * * 1-5') market_review_session='close' ;;
+            *) market_review_session="$(node scripts/verify-market-review-publication.js --print-expected-session)" ;;
+          esac
+          expected_market_review_date="$(node scripts/verify-market-review-publication.js --print-expected-date)"
+          for attempt in 1 2 3; do
+            if node scripts/update-market-review.js \
+              && node scripts/verify-market-review-publication.js \
+                --expected-date "$expected_market_review_date" \
+                --session "$market_review_session"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "Market review refresh/publication validation failed; retrying in 30 seconds ($attempt/3)"
+            sleep 30
+          done
 
       - name: Commit and push
         working-directory: private
@@ -84,12 +114,18 @@ jobs:
           if [ "${{ steps.refresh_sector_short_k.outcome }}" = "success" ]; then
             git add api/tdx-sector-member-map.json
           else
-            echo "Short-K snapshot failed; keeping the previous member map"
+            echo "Short-K snapshot failed or was skipped; keeping the previous member map"
             git checkout -- api/tdx-sector-member-map.json || true
           fi
           git add api/tdx-sector-baseline.json
           if [ "${{ steps.refresh_home_index_close.outcome }}" = "success" ]; then
             git add public/data/home-index-close.json
+          fi
+          if [ "${{ steps.refresh_market_review.outcome }}" = "success" ]; then
+            git add public/data/market-review.json public/data/market-review-summary.json public/data/market-review-catalog.json
+          else
+            echo "Market review snapshot failed or was skipped; keeping the previous market review files"
+            git checkout -- public/data/market-review.json public/data/market-review-summary.json public/data/market-review-catalog.json || true
           fi
           if git diff --cached --quiet; then
             echo "No snapshot changes"
@@ -102,3 +138,7 @@ jobs:
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             sleep 15
           done
+
+      - name: Report refresh failure
+        if: always() && (steps.refresh_market_review.outcome == 'failure' || steps.refresh_sector_short_k.outcome == 'failure' || steps.refresh_home_index_close.outcome == 'failure')
+        run: exit 1
