@@ -82,6 +82,21 @@ jobs:
           expected_close_date="$(python3 -c "import sys; sys.path.insert(0, 'api'); import tdx_sector; print(tdx_sector.expected_close_trade_date())")"
           node scripts/verify-tdx-sector-publication.js --expected-date "$expected_close_date"
 
+      - name: Refresh band strategy close snapshot
+        id: refresh_band_close
+        continue-on-error: true
+        working-directory: private
+        run: node scripts/update-band-strategy-picks.js --latest-only --session=close --candidate-only
+
+      - name: Verify band close snapshot
+        id: verify_band_close
+        if: always() && steps.refresh_band_close.outcome == 'success'
+        continue-on-error: true
+        working-directory: private
+        run: |
+          expected_band_date="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
+          node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session close
+
       - name: Commit and push
         working-directory: private
         run: |
@@ -97,6 +112,12 @@ jobs:
           if [ "${{ steps.refresh_home_index_close.outcome }}" = "success" ]; then
             git add public/data/home-index-close.json
           fi
+          if [ "${{ steps.refresh_band_close.outcome }}" = "success" ] && [ "${{ steps.verify_band_close.outcome }}" = "success" ]; then
+            git add public/data/band-strategy-picks.json public/data/band-strategy-summary.json
+          else
+            echo "Band close snapshot failed or was skipped; keeping the previous band files"
+            git checkout -- public/data/band-strategy-picks.json public/data/band-strategy-summary.json || true
+          fi
           if git diff --cached --quiet; then
             echo "No snapshot changes"
             exit 0
@@ -110,5 +131,5 @@ jobs:
           done
 
       - name: Report refresh failure
-        if: always() && (steps.refresh_sector_short_k.outcome == 'failure' || steps.refresh_home_index_close.outcome == 'failure')
+        if: always() && (steps.refresh_sector_short_k.outcome == 'failure' || steps.refresh_home_index_close.outcome == 'failure' || steps.refresh_band_close.outcome == 'failure' || steps.verify_band_close.outcome == 'failure')
         run: exit 1
