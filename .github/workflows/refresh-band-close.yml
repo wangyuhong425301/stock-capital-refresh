@@ -1,0 +1,58 @@
+name: Refresh band close snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 15:02 Asia/Shanghai: start the full-market band close scan early enough
+    # to publish the final 30/60/120 + day/week result before 15:30.
+    - cron: '2 7 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-band-close
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      WEEK_MONTH_CONCURRENCY: 24
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+        with:
+          repository: wangyuhong425301/stock-capital-miniprogram
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: private
+          fetch-depth: 0
+
+      - name: Refresh band close snapshot
+        id: refresh_band_close
+        working-directory: private
+        run: node scripts/update-band-strategy-picks.js --latest-only --session=close --full
+
+      - name: Verify band close snapshot
+        working-directory: private
+        run: |
+          expected_band_date="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
+          node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session close
+
+      - name: Commit and push
+        working-directory: private
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/band-strategy-picks.json public/data/band-strategy-summary.json
+          if git diff --cached --quiet; then
+            echo "No band close changes"
+            exit 0
+          fi
+          git commit -m "chore: refresh picks data"
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort || true
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 15
+          done
