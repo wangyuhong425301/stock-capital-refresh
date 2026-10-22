@@ -8,8 +8,11 @@ on:
         required: false
         default: ''
   schedule:
-    # 11:35 morning and 15:30 close (Asia/Shanghai), independent of the sector job.
+    # 11:35 morning; 15:02/15:12 close (both wait for the 15:10 close gate);
+    # 15:30 is a backup that skips an already captured close.
     - cron: '35 3 * * 1-5'
+    - cron: '2 7 * * 1-5'
+    - cron: '12 7 * * 1-5'
     - cron: '30 7 * * 1-5'
 
 permissions:
@@ -40,12 +43,20 @@ jobs:
             *)
               case "${{ github.event.schedule }}" in
                 '35 3 * * 1-5') market_review_session='morning' ;;
-                '30 7 * * 1-5') market_review_session='close' ;;
+                '2 7 * * 1-5'|'12 7 * * 1-5'|'30 7 * * 1-5') market_review_session='close' ;;
                 *) market_review_session="$(node scripts/verify-market-review-publication.js --print-expected-session)" ;;
               esac
               ;;
           esac
           expected_market_review_date="$(node scripts/verify-market-review-publication.js --print-expected-date)"
+          if [ "$market_review_session" = "close" ]; then
+            guard_result="$(node scripts/market-review-close-guard.js --wait --skip-if-complete --expected-date "$expected_market_review_date")"
+            echo "$guard_result"
+            if echo "$guard_result" | grep -qx 'skip=1'; then
+              echo "session=close" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           for attempt in 1 2 3; do
             if node scripts/update-market-review.js \
               && node scripts/verify-market-review-publication.js \
