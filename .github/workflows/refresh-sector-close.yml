@@ -86,7 +86,7 @@ jobs:
         id: refresh_band_close
         continue-on-error: true
         working-directory: private
-        run: node scripts/update-band-strategy-picks.js --latest-only --session=close --full
+        run: node scripts/update-band-strategy-picks.js --latest-only --session=close --full --skip-if-complete
 
       - name: Verify band close snapshot
         id: verify_band_close
