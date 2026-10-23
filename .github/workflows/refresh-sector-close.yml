@@ -3,9 +3,9 @@ name: Refresh sector close snapshot
 on:
   workflow_dispatch:
   schedule:
-    # 15:30 Asia/Shanghai close snapshots. The market review runs in the
+    # 15:02 Asia/Shanghai close snapshots. The market review runs in the
     # separate refresh-market-review workflow.
-    - cron: '30 7 * * 1-5'
+    - cron: '2 7 * * 1-5'
 
 permissions:
   contents: read
@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
 
       - name: Refresh sector baseline
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
         working-directory: private
         run: |
           for attempt in 1 2 3; do
@@ -45,7 +45,7 @@ jobs:
           done
 
       - name: Refresh sector member K snapshot
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
         working-directory: private
         run: |
           for attempt in 1 2; do
@@ -57,14 +57,14 @@ jobs:
 
       - name: Refresh sector member 5m/15m K snapshot
         id: refresh_sector_short_k
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
         continue-on-error: true
         working-directory: private
         run: node scripts/update-tdx-sector-short-k.js
 
       - name: Refresh home index close snapshot
         id: refresh_home_index_close
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
         continue-on-error: true
         working-directory: private
         run: |
@@ -76,7 +76,7 @@ jobs:
           done
 
       - name: Verify publication
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 7 * * 1-5'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
         working-directory: private
         run: |
           expected_close_date="$(python3 -c "import sys; sys.path.insert(0, 'api'); import tdx_sector; print(tdx_sector.expected_close_trade_date())")"
