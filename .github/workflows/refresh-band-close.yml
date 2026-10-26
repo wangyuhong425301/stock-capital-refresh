@@ -1,22 +1,25 @@
-name: Refresh band close snapshot
+name: Refresh band checkpoints
 
 on:
   workflow_dispatch:
   schedule:
-    # 15:02 Asia/Shanghai: start the full-market band close scan early enough
-    # to publish the final 30/60/120 + day/week result before 15:30.
+    # Asia/Shanghai session checkpoints:
+    # 11:40 full morning scan, 14:01 candidate afternoon scan, 15:02 full close.
+    - cron: '40 3 * * 1-5'
+    - cron: '1 6 * * 1-5'
     - cron: '2 7 * * 1-5'
 
 permissions:
   contents: read
 
 concurrency:
-  group: refresh-band-close
+  group: refresh-band-checkpoints
   cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       WEEK_MONTH_CONCURRENCY: 24
     steps:
@@ -28,16 +31,37 @@ jobs:
           path: private
           fetch-depth: 0
 
-      - name: Refresh band close snapshot
-        id: refresh_band_close
+      - name: Refresh band checkpoint
+        id: refresh_band_checkpoint
         working-directory: private
-        run: node scripts/update-band-strategy-picks.js --latest-only --session=close --full
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          case "$SCHEDULE" in
+            '40 3 * * 1-5')
+              args=(--latest-only --session=morning --full)
+              ;;
+            '1 6 * * 1-5')
+              args=(--latest-only --session=afternoon --candidate-only)
+              ;;
+            *)
+              args=(--latest-only --session=close --full)
+              ;;
+          esac
+          node scripts/update-band-strategy-picks.js "${args[@]}"
 
-      - name: Verify band close snapshot
+      - name: Verify band checkpoint
         working-directory: private
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           expected_band_date="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
-          node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session close
+          case "$SCHEDULE" in
+            '40 3 * * 1-5') session=morning ;;
+            '1 6 * * 1-5') session=afternoon ;;
+            *) session=close ;;
+          esac
+          node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session "$session"
 
       - name: Commit and push
         working-directory: private
@@ -46,7 +70,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/data/band-strategy-picks.json public/data/band-strategy-summary.json
           if git diff --cached --quiet; then
-            echo "No band close changes"
+            echo "No band changes"
             exit 0
           fi
           git commit -m "chore: refresh picks data"
