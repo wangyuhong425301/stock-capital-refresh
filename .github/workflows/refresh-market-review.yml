@@ -65,7 +65,9 @@ jobs:
               exit 0
             fi
           fi
-          for attempt in 1 2 3 4 5; do
+          max_attempts=5
+          if [ "$market_review_session" = "close" ]; then max_attempts=20; fi
+          for attempt in $(seq 1 "$max_attempts"); do
             if node scripts/update-market-review.js \
               && node scripts/verify-market-review-publication.js \
                 --expected-date "$expected_market_review_date" \
@@ -73,9 +75,9 @@ jobs:
               echo "session=$market_review_session" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if [ "$attempt" -eq 5 ]; then exit 1; fi
-            echo "Market review refresh/publication validation failed; retrying in 45 seconds ($attempt/5)"
-            sleep 45
+            if [ "$attempt" -eq "$max_attempts" ]; then exit 1; fi
+            echo "Market review refresh/publication validation failed; retrying in 60 seconds ($attempt/$max_attempts)"
+            sleep 60
           done
 
       - name: Commit and push
