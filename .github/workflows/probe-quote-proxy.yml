@@ -1,0 +1,57 @@
+name: Probe market review proxy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+        with:
+          repository: wangyuhong425301/stock-capital-miniprogram
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: private
+          fetch-depth: 1
+
+      - name: Generate the market review entirely through the Asia proxy
+        working-directory: private
+        env:
+          MARKET_REVIEW_PROXY_URL: https://stock.kings-w.site/api/quote-proxy
+          MARKET_REVIEW_PROXY_TOKEN: ${{ secrets.MARKET_REVIEW_PROXY_TOKEN }}
+          MARKET_REVIEW_FORCE_PROXY: '1'
+        run: |
+          node -e "
+          const { fetchText } = require('./server/market-review-service');
+          const url = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=3&po=1&np=1&fltt=2&invt=2&fid=f6&fs=m:0+t:6&fields=f2,f12,f14';
+          fetchText(url).then((text) => {
+            console.log('probe ok', text.slice(0, 120));
+          }).catch((error) => {
+            console.error('probe failed', error && error.message);
+            process.exit(1);
+          });
+          "
+          node scripts/update-market-review.js
+          node scripts/verify-market-review-publication.js \
+            --expected-date "$(node scripts/verify-market-review-publication.js --print-expected-date)" \
+            --session afternoon
+          node -e "
+          const review = require('./public/data/market-review.json');
+          const quality = review.quality || {};
+          console.log(JSON.stringify({
+            tradeDate: review.tradeDate,
+            dataStatusClass: review.dataStatusClass,
+            completeness: quality.completeness,
+            sectorCompleteness: quality.sectorCompleteness,
+            requestPages: quality.requestPages,
+            completedPages: quality.completedPages,
+            sectorStockCards: quality.sectorStockCards,
+            sectorStockFailedSectors: quality.sectorStockFailedSectors,
+            warnings: (quality.warnings || []).slice(0, 6),
+            durationMs: quality.durationMs,
+          }));
+          "
