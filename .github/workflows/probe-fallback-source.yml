@@ -1,0 +1,52 @@
+name: Probe fallback market review
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+        with:
+          repository: wangyuhong425301/stock-capital-miniprogram
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: private
+          fetch-depth: 1
+
+      - name: Generate the market review from the backup sources only
+        working-directory: private
+        env:
+          MARKET_REVIEW_FORCE_FALLBACK: '1'
+        run: |
+          node scripts/update-market-review.js
+          node scripts/verify-market-review-publication.js \
+            --expected-date "$(node scripts/verify-market-review-publication.js --print-expected-date)" \
+            --session afternoon
+          node -e "
+          const review = require('./public/data/market-review.json');
+          const quality = review.quality || {};
+          console.log(JSON.stringify({
+            tradeDate: review.tradeDate,
+            dataStatusClass: review.dataStatusClass,
+            completeness: quality.completeness,
+            sectorCompleteness: quality.sectorCompleteness,
+            requestPages: quality.requestPages,
+            completedPages: quality.completedPages,
+            stocks: review.scanned,
+            industries: quality.industryRows,
+            concepts: quality.conceptRows,
+            indexes: (review.indexes || []).map((item) => item.code + ':' + item.price),
+            phase: review.market && review.market.phaseName,
+            score: review.market && review.market.emotionScore,
+            turnover: review.capital && review.capital.turnover,
+            mainNet: review.capital && review.capital.mainNet,
+            fallbackSources: quality.fallbackSources,
+            warnings: (quality.warnings || []).filter((warning) => /备用|腾讯|新浪/.test(warning)),
+            durationMs: quality.durationMs,
+          }, null, 1));
+          "
