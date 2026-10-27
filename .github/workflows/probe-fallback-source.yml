@@ -26,7 +26,7 @@ jobs:
           node scripts/update-market-review.js
           node scripts/verify-market-review-publication.js \
             --expected-date "$(node scripts/verify-market-review-publication.js --print-expected-date)" \
-            --session afternoon
+            --session close
           node -e "
           const review = require('./public/data/market-review.json');
           const quality = review.quality || {};
