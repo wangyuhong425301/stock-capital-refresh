@@ -9,11 +9,12 @@ on:
         default: ''
   schedule:
     # 11:35 morning; 15:02/15:12 close (both wait for the 15:10 close gate);
-    # 15:30 is a backup that skips an already captured close.
+    # 15:30 and 16:10 are backups that skip an already captured close.
     - cron: '35 3 * * 1-5'
     - cron: '2 7 * * 1-5'
     - cron: '12 7 * * 1-5'
     - cron: '30 7 * * 1-5'
+    - cron: '10 8 * * 1-5'
 
 permissions:
   contents: read
@@ -37,13 +38,19 @@ jobs:
       - name: Refresh market review
         id: refresh
         working-directory: private
+        env:
+          # When this US runner cannot reach eastmoney/kaipanhong, the data layer
+          # replays the same GETs through the Asia-region quote proxy instead of
+          # losing the only close snapshot of the day.
+          MARKET_REVIEW_PROXY_URL: ${{ vars.MARKET_REVIEW_PROXY_URL || 'https://stock.kings-w.site/api/quote-proxy' }}
+          MARKET_REVIEW_PROXY_TOKEN: ${{ secrets.MARKET_REVIEW_PROXY_TOKEN }}
         run: |
           case "${{ github.event.inputs.session }}" in
             morning|afternoon|close) market_review_session="${{ github.event.inputs.session }}" ;;
             *)
               case "${{ github.event.schedule }}" in
                 '35 3 * * 1-5') market_review_session='morning' ;;
-                '2 7 * * 1-5'|'12 7 * * 1-5'|'30 7 * * 1-5') market_review_session='close' ;;
+                '2 7 * * 1-5'|'12 7 * * 1-5'|'30 7 * * 1-5'|'10 8 * * 1-5') market_review_session='close' ;;
                 *) market_review_session="$(node scripts/verify-market-review-publication.js --print-expected-session)" ;;
               esac
               ;;
@@ -57,7 +64,7 @@ jobs:
               exit 0
             fi
           fi
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5; do
             if node scripts/update-market-review.js \
               && node scripts/verify-market-review-publication.js \
                 --expected-date "$expected_market_review_date" \
@@ -65,9 +72,9 @@ jobs:
               echo "session=$market_review_session" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            echo "Market review refresh/publication validation failed; retrying in 30 seconds ($attempt/3)"
-            sleep 30
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            echo "Market review refresh/publication validation failed; retrying in 45 seconds ($attempt/5)"
+            sleep 45
           done
 
       - name: Commit and push
