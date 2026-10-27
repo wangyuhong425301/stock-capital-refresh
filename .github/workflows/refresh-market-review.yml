@@ -44,6 +44,7 @@ jobs:
           # losing the only close snapshot of the day.
           MARKET_REVIEW_PROXY_URL: ${{ vars.MARKET_REVIEW_PROXY_URL || 'https://stock.kings-w.site/api/quote-proxy' }}
           MARKET_REVIEW_PROXY_TOKEN: ${{ secrets.MARKET_REVIEW_PROXY_TOKEN }}
+          MARKET_REVIEW_FORCE_PROXY: ${{ vars.MARKET_REVIEW_FORCE_PROXY }}
         run: |
           case "${{ github.event.inputs.session }}" in
             morning|afternoon|close) market_review_session="${{ github.event.inputs.session }}" ;;
