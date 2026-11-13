@@ -31,39 +31,51 @@ jobs:
           path: private
           fetch-depth: 0
 
-      - name: Refresh band checkpoint
-        id: refresh_band_checkpoint
+      - name: Resolve band session
+        id: band_session
         working-directory: private
         env:
           SCHEDULE: ${{ github.event.schedule }}
         run: |
-          case "$SCHEDULE" in
-            '40 3 * * 1-5')
-              args=(--latest-only --session=morning --full)
-              ;;
-            '1 6 * * 1-5')
-              args=(--latest-only --session=afternoon --candidate-only)
-              ;;
-            *)
-              args=(--latest-only --session=close --full)
-              ;;
-          esac
-          node scripts/update-band-strategy-picks.js "${args[@]}"
-
-      - name: Verify band checkpoint
-        working-directory: private
-        env:
-          SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          expected_band_date="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
           case "$SCHEDULE" in
             '40 3 * * 1-5') session=morning ;;
             '1 6 * * 1-5') session=afternoon ;;
             *) session=close ;;
           esac
-          node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session "$session"
+          echo "session=$session" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "schedule" ] \
+            && ! node scripts/update-band-strategy-picks.js --session-window-check --session="$session"; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::band $session checkpoint skipped: the scheduled Asia/Shanghai window has passed"
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh band checkpoint
+        id: refresh_band_checkpoint
+        if: steps.band_session.outputs.run == 'true'
+        working-directory: private
+        env:
+          SESSION: ${{ steps.band_session.outputs.session }}
+        run: |
+          case "$SESSION" in
+            morning) args=(--latest-only --session=morning --full) ;;
+            afternoon) args=(--latest-only --session=afternoon --candidate-only) ;;
+            *) args=(--latest-only --session=close --full) ;;
+          esac
+          node scripts/update-band-strategy-picks.js "${args[@]}"
+
+      - name: Verify band checkpoint
+        if: steps.band_session.outputs.run == 'true'
+        working-directory: private
+        env:
+          SESSION: ${{ steps.band_session.outputs.session }}
+        run: |
+          expected_band_date="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
+          node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session "$SESSION"
 
       - name: Commit and push
+        if: steps.band_session.outputs.run == 'true'
         working-directory: private
         run: |
           git config user.name "github-actions[bot]"
