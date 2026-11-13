@@ -1,0 +1,128 @@
+name: Refresh bozhuang week
+
+# 搏庄周<12 收盘快照。真正的 15:02 触发来自 Cloudflare Worker
+# (deploy/cloudflare/worker.js)；这里的 schedule 只做两件事：
+#   1. GitHub 偶尔准时（15:10）时作为第一轮的后备；
+#   2. GitHub 排到晚上（实测 7-9 小时延迟）时作为夜间兜底。
+# workflow 是幂等的：今天已经发布过就只做一次 verify 然后退出。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '10 7 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-bozhuang-week
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+        with:
+          repository: wangyuhong425301/stock-capital-miniprogram
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: private
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: private/package-lock.json
+
+      - name: Install dependencies
+        working-directory: private
+        run: npm install --no-audit --no-fund
+
+      - name: Check trading day and existing publication
+        id: gate
+        working-directory: private
+        run: |
+          expected="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
+          today="$(date +%F)"
+          echo "expected=${expected} today=${today}"
+          if [ "$expected" != "$today" ]; then
+            echo "not a trading day for the close session; nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if node scripts/verify-bozhuang-week-picks.js \
+            --expected-date "$expected" \
+            --session close >/dev/null 2>&1; then
+            echo "bozhuang week already published for ${expected}"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the daily close to settle
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: private
+        run: |
+          expected="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
+          # Five active names across both exchanges. 4/5 is enough: one of
+          # them can be halted without blocking the whole market scan.
+          deadline="1517"
+          for attempt in $(seq 1 40); do
+            probe="$(node scripts/update-bozhuang-week-picks.js \
+              --session=close \
+              --quiet \
+              --stocks=000001,600519,600036,000858,601318 2>/dev/null || true)"
+            fresh="$(printf '%s\n' "$probe" | grep -c "date=${expected}")"
+            echo "close probe ${attempt}: ${fresh}/5 fresh at $(date +%H:%M:%S)"
+            if [ "$fresh" -ge 4 ]; then
+              exit 0
+            fi
+            if [ "$(date +%H%M)" -ge "$deadline" ]; then
+              echo "close data did not settle before ${deadline}; refusing to publish"
+              exit 1
+            fi
+            sleep 20
+          done
+          exit 1
+
+      - name: Refresh bozhuang week picks
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: private
+        run: |
+          node scripts/update-bozhuang-week-picks.js --session=close --concurrency=28
+
+      - name: Verify publication gate
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: private
+        run: |
+          expected="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
+          node scripts/verify-bozhuang-week-picks.js \
+            --expected-date "$expected" \
+            --session close
+
+      - name: Commit and push
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: private
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/bozhuang-week-picks.json public/data/bozhuang-week
+          if git diff --cached --quiet; then
+            echo "no bozhuang changes"
+            exit 0
+          fi
+          git commit -m "chore: refresh picks data"
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort || true
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 15
+          done
