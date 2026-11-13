@@ -118,6 +118,13 @@ jobs:
             exit 0
           fi
           git commit -m "chore: refresh picks data"
+          # npm/TDX helpers can leave a tracked file dirty after the data
+          # commit (the private workflow has the same guard). Stash it so the
+          # rebase is allowed; the bozhuang files are already committed.
+          if ! git diff --quiet; then
+            git status --porcelain
+            git stash push --include-untracked --message "uncommitted refresh output"
+          fi
           for attempt in 1 2 3; do
             if git pull --rebase origin main && git push origin HEAD:main; then
               exit 0
