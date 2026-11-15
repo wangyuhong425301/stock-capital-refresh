@@ -20,7 +20,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       TZ: Asia/Shanghai
 
@@ -106,8 +106,9 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         working-directory: private
         run: |
-          # 一轮全市场日线扫描同时产出博庄周<12 与近1年关注；后者闸门不满足时
-          # 只保留昨日快照，不拖挂博庄。
+          # 一轮全市场扫描同时产出博庄周<12 与近1年关注；后者按通达信
+          # 「选股周期=年线」额外读取全量年K，闸门不满足时只保留昨日快照，
+          # 不拖挂博庄。
           node scripts/update-bozhuang-week-picks.js --session=close --concurrency=28
 
       - name: Verify bozhuang publication gate
