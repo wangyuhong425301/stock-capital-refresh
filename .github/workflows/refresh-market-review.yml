@@ -8,8 +8,8 @@ on:
         required: false
         default: ''
   schedule:
-    # 11:35 morning; 15:02/15:12 close (both wait for the 15:10 close gate);
-    # 15:30 and 16:10 are backups that skip an already captured close.
+    # 11:35 morning; 15:02/15:12 close (both wait for the 15:30 close data
+    # point); 15:30 and 16:10 are backups that skip an already captured close.
     - cron: '35 3 * * 1-5'
     - cron: '2 7 * * 1-5'
     - cron: '12 7 * * 1-5'
@@ -56,6 +56,11 @@ jobs:
               esac
               ;;
           esac
+          if [ "$market_review_session" = "close" ]; then
+            # 收盘窗口美国 runner 直连东财会被边缘直接回 502；代理优先，代理
+            # 抖动时仍回落到直连/IPv4，避免丢掉当天唯一一次收盘快照。
+            export MARKET_REVIEW_FORCE_PROXY=1
+          fi
           expected_market_review_date="$(node scripts/verify-market-review-publication.js --print-expected-date)"
           if [ "$market_review_session" = "close" ]; then
             guard_result="$(node scripts/market-review-close-guard.js --wait --skip-if-complete --expected-date "$expected_market_review_date")"
