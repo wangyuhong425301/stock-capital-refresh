@@ -130,6 +130,33 @@ jobs:
             sleep 15
           done
 
+      # 复盘（~15:38 发布）通常早于板块快照（~15:56 提交），catalog 会缺
+      # stockKCloseSnapshot，卡片只能逐只回源 /api/stock-k。板块快照一落地就
+      # 把已发布复盘的快照补上：只补快照、不动结论；若复盘尚未发布或 push
+      # 冲突则跳过，后续复盘检查点（16:10 备份）还会再补一次。
+      - name: Patch published review close K snapshot
+        id: patch_review_snapshot
+        if: always() && steps.refresh_sector_short_k.outcome == 'success'
+        continue-on-error: true
+        working-directory: private
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -f -B review-snapshot-patch origin/main
+          expected_review_date="$(node scripts/verify-market-review-publication.js --print-expected-date)"
+          node scripts/patch-market-review-stock-k-snapshot.js --expected-date "$expected_review_date" | tee patch.log
+          if grep -q '^patched=1' patch.log; then
+            git add public/data/market-review.json public/data/market-review-summary.json public/data/market-review-summary-lite.json public/data/market-review-catalog.json
+            if git diff --cached --quiet; then exit 0; fi
+            git commit -m "chore: patch market review close K snapshot"
+            for attempt in 1 2 3; do
+              if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
+              git rebase --abort || true
+              if [ "$attempt" -eq 3 ]; then exit 1; fi
+              sleep 15
+            done
+          fi
+
       - name: Report refresh failure
         if: always() && (steps.refresh_sector_short_k.outcome == 'failure' || steps.refresh_home_index_close.outcome == 'failure' || steps.refresh_band_close.outcome == 'failure' || steps.verify_band_close.outcome == 'failure')
         run: exit 1
