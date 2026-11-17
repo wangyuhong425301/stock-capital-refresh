@@ -28,6 +28,20 @@ jobs:
           path: private
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: private/package-lock.json
+
+      # 收盘镜像要写私有存储，storage-provider 的 oss 模式需要 ali-oss，
+      # 而上面只 checkout 了仓库；没有依赖时镜像会静默退化成只发静态文件。
+      # 不写 package-lock，避免 Install 步骤把工作区改脏后挡住后面的 rebase。
+      - name: Install dependencies
+        working-directory: private
+        run: npm install --no-audit --no-fund --package-lock=false
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -86,7 +100,29 @@ jobs:
         id: refresh_band_close
         continue-on-error: true
         working-directory: private
-        run: node scripts/update-band-strategy-picks.js --latest-only --session=close --full --skip-if-complete
+        env:
+          # 私有快照存储（阿里云 OSS）。凭据没配时只发布静态文件，行为与旧版一致；
+          # 配好后收盘快照会同时写 latest，H5 不必在 15:30 检查点重算一遍。
+          PICK_STORAGE_PROVIDER: ${{ secrets.OSS_ACCESS_KEY_ID != '' && 'oss' || '' }}
+          PICK_LATEST_ONLY: '1'
+          PICK_INCREMENTAL_BLOB_WRITE: '1'
+          OSS_REGION: ${{ secrets.OSS_REGION }}
+          OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+          OSS_PREFIX: ${{ secrets.OSS_PREFIX }}
+          OSS_SLD_ENABLE: '1'
+          OSS_STRICT_CAS: '0'
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          args=(--latest-only --session=close --full --skip-if-complete)
+          if [ -n "${OSS_ACCESS_KEY_ID:-}" ] && [ -n "${OSS_ACCESS_KEY_SECRET:-}" ] && [ -n "${OSS_BUCKET:-}" ]; then
+            args+=(--blob-store-optional)
+            echo "band close mirrors the snapshot to the private store"
+          else
+            echo "private store credentials are not configured; publishing static files only"
+          fi
+          node scripts/update-band-strategy-picks.js "${args[@]}"
 
       - name: Verify band close snapshot
         id: verify_band_close
