@@ -35,13 +35,6 @@ jobs:
           cache: npm
           cache-dependency-path: private/package-lock.json
 
-      # 收盘镜像要写私有存储，storage-provider 的 oss 模式需要 ali-oss，
-      # 而上面只 checkout 了仓库；没有依赖时镜像会静默退化成只发静态文件。
-      # 不写 package-lock，避免 Install 步骤把工作区改脏后挡住后面的 rebase。
-      - name: Install dependencies
-        working-directory: private
-        run: npm install --no-audit --no-fund --package-lock=false
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -117,8 +110,14 @@ jobs:
         run: |
           args=(--latest-only --session=close --full --skip-if-complete)
           if [ -n "${OSS_ACCESS_KEY_ID:-}" ] && [ -n "${OSS_ACCESS_KEY_SECRET:-}" ] && [ -n "${OSS_BUCKET:-}" ]; then
-            args+=(--blob-store-optional)
-            echo "band close mirrors the snapshot to the private store"
+            # storage-provider 的 oss 模式需要 ali-oss；装不上就退回静态发布，
+            # 不让镜像能力挡住当天的收盘快照。
+            if npm install --no-audit --no-fund --package-lock=false; then
+              args+=(--blob-store-optional)
+              echo "band close mirrors the snapshot to the private store"
+            else
+              echo "::warning::npm install failed; publishing static files only"
+            fi
           else
             echo "private store credentials are not configured; publishing static files only"
           fi
