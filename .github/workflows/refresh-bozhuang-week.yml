@@ -1,7 +1,8 @@
 name: Refresh bozhuang week
 
-# 搏庄周<12 + 近1年关注 收盘快照。真正的 15:02 触发来自 Cloudflare Worker
-# (deploy/cloudflare/worker.js)；这里的 schedule 只做两件事：
+# 博庄周期（周/月/季/年）+ MACD周期（周/月/季/年）收盘快照。真正的
+# 15:02 触发来自 Cloudflare Worker (deploy/cloudflare/worker.js)；这里的
+# schedule 只做两件事：
 #   1. GitHub 偶尔准时（15:10）时作为第一轮的后备；
 #   2. GitHub 排到晚上（实测 7-9 小时延迟）时作为夜间兜底。
 # workflow 是幂等的：两组今天都已经发布过就只做一次 verify 然后退出。
@@ -106,10 +107,10 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         working-directory: private
         run: |
-          # 一轮全市场扫描同时产出博庄周<12 与近1年关注；后者按通达信
-          # 「选股周期=年线」额外读取全量年K，闸门不满足时只保留昨日快照，
-          # 不拖挂博庄。
-          node scripts/update-bozhuang-week-picks.js --session=close --concurrency=28
+          # 一轮全市场扫描同时产出博庄周期（周/月/季/年）与 MACD周期
+          # （周/月/季/年）；两组各自过发布闸门，闸门不满足时只保留昨日
+          # 快照，不互相拖挂。
+          node scripts/update-bozhuang-week-picks.js --session=close --concurrency=32
 
       - name: Verify bozhuang publication gate
         id: verify_bozhuang
@@ -141,7 +142,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           added=false
           if [ "${{ steps.verify_bozhuang.outcome }}" = "success" ]; then
-            git add public/data/bozhuang-week-picks.json public/data/bozhuang-week
+            git add public/data/bozhuang-week-picks.json
+            # 最新一天不再重复落历史文件，首日目录可能不存在。
+            if [ -d public/data/bozhuang-week ]; then
+              git add public/data/bozhuang-week
+            fi
             added=true
           fi
           if [ "${{ steps.verify_yearline.outcome }}" = "success" ]; then
