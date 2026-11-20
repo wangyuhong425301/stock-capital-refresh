@@ -26,6 +26,12 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    # A delayed schedule run used to sit on a runner for the full 6-hour job
+    # limit (the 11-19 close run started at 06:32 and was cancelled at 12:32),
+    # which also held the concurrency group and blocked the next checkpoint.
+    # 45 minutes still covers the 15:02/15:12 runs waiting for the 15:30 data
+    # point plus one full scan, but frees the queue long before the next day.
+    timeout-minutes: 45
     steps:
       - name: Checkout private repository
         uses: actions/checkout@v4
