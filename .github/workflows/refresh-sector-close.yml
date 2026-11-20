@@ -104,6 +104,36 @@ jobs:
           expected_close_date="$(python3 -c "import sys; sys.path.insert(0, 'api'); import tdx_sector; print(tdx_sector.expected_close_trade_date())")"
           node scripts/verify-tdx-sector-publication.js --expected-date "$expected_close_date"
 
+      # 板块与波段分开提交：波段是全市场扫描（实测 15-25 分钟），以前放在
+      # 同一个 commit 里会把已经算好的板块收盘快照一直压在本地，页面只能
+      # 继续显示上一交易日。先把板块基线推上去，再慢慢补波段。
+      - name: Commit sector close snapshot
+        working-directory: private
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "${{ steps.refresh_sector_short_k.outcome }}" = "success" ]; then
+            git add api/tdx-sector-member-map.json
+          else
+            echo "Short-K snapshot failed or was skipped; keeping the previous member map"
+            git checkout -- api/tdx-sector-member-map.json || true
+          fi
+          git add api/tdx-sector-baseline.json
+          if [ "${{ steps.refresh_home_index_close.outcome }}" = "success" ]; then
+            git add public/data/home-index-close.json
+          fi
+          if git diff --cached --quiet; then
+            echo "No sector snapshot changes"
+            exit 0
+          fi
+          git commit -m "chore: refresh market close snapshots"
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort || true
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 15
+          done
+
       - name: Refresh band strategy close snapshot
         id: refresh_band_close
         continue-on-error: true
@@ -119,32 +149,23 @@ jobs:
           expected_band_date="$(node -e "process.stdout.write(require('./scripts/update-band-strategy-picks').expectedBandTradeDate())")"
           node scripts/verify-band-strategy-publication.js --expected-date "$expected_band_date" --session close
 
-      - name: Commit and push
+      - name: Commit band close snapshot
         working-directory: private
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ "${{ steps.refresh_sector_short_k.outcome }}" = "success" ]; then
-            git add api/tdx-sector-member-map.json
-          else
-            echo "Short-K snapshot failed or was skipped; keeping the previous member map"
-            git checkout -- api/tdx-sector-member-map.json || true
-          fi
-          git add api/tdx-sector-baseline.json
-          if [ "${{ steps.refresh_home_index_close.outcome }}" = "success" ]; then
-            git add public/data/home-index-close.json
-          fi
           if [ "${{ steps.refresh_band_close.outcome }}" = "success" ] && [ "${{ steps.verify_band_close.outcome }}" = "success" ]; then
             git add public/data/band-strategy-picks.json public/data/band-strategy-summary.json
           else
             echo "Band close snapshot failed or was skipped; keeping the previous band files"
             git checkout -- public/data/band-strategy-picks.json public/data/band-strategy-summary.json || true
-          fi
-          if git diff --cached --quiet; then
-            echo "No snapshot changes"
             exit 0
           fi
-          git commit -m "chore: refresh market close snapshots"
+          if git diff --cached --quiet; then
+            echo "No band close changes"
+            exit 0
+          fi
+          git commit -m "chore: refresh band close snapshot"
           for attempt in 1 2 3; do
             if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
             git rebase --abort || true
