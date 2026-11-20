@@ -33,8 +33,30 @@ jobs:
         with:
           python-version: '3.12'
 
+      # 幂等闸门：VPS 会在 15:05/15:25/16:05 各触发一次，GitHub schedule 也会
+      # 补跑。今天的两份产物（基线 + 成分短K）都已经通过发布校验就只做一次
+      # verify 后退出，避免静默重跑 30 分钟再提交一份相同数据。
+      - name: Check trading day and existing publication
+        id: gate
+        working-directory: private
+        run: |
+          expected="$(python3 -c "import sys; sys.path.insert(0, 'api'); import tdx_sector; print(tdx_sector.expected_close_trade_date())")"
+          today="$(date +%F)"
+          echo "expected=${expected} today=${today}"
+          if [ "$expected" != "$today" ]; then
+            echo "not a trading day for the close session; nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if node scripts/verify-tdx-sector-publication.js --expected-date "$expected" >/dev/null 2>&1; then
+            echo "sector close snapshot already published for ${expected}"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Refresh sector baseline
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
+        if: steps.gate.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5')
         working-directory: private
         run: |
           for attempt in 1 2 3; do
@@ -45,7 +67,7 @@ jobs:
           done
 
       - name: Refresh sector member K snapshot
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
+        if: steps.gate.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5')
         working-directory: private
         run: |
           for attempt in 1 2; do
@@ -57,7 +79,7 @@ jobs:
 
       - name: Refresh sector member 5m/15m K snapshot
         id: refresh_sector_short_k
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
+        if: steps.gate.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5')
         continue-on-error: true
         working-directory: private
         run: node scripts/update-tdx-sector-short-k.js
@@ -76,7 +98,7 @@ jobs:
           done
 
       - name: Verify publication
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5'
+        if: steps.gate.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '2 7 * * 1-5')
         working-directory: private
         run: |
           expected_close_date="$(python3 -c "import sys; sys.path.insert(0, 'api'); import tdx_sector; print(tdx_sector.expected_close_trade_date())")"
